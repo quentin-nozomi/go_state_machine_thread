@@ -13,45 +13,44 @@ type State interface {
 }
 
 type Context struct {
-	state        State
-	stateAccess  sync.RWMutex
-	memberAccess sync.RWMutex
+	state       State
+	stateAccess sync.RWMutex
 }
 
-func (c *Context) SetState(state State) {
+func (c *Context) setState(state State) {
 	c.stateAccess.Lock()
 	defer c.stateAccess.Unlock()
 	c.state = state
 }
 
 func (c *Context) Status() string {
-	c.memberAccess.RLock()
-	defer c.memberAccess.RUnlock()
+	c.stateAccess.RLock()
+	defer c.stateAccess.RUnlock()
 	return c.state.name()
 }
 
 func (c *Context) GoNext() {
-	c.memberAccess.RLock()
-	defer c.memberAccess.RUnlock()
+	c.stateAccess.Lock()
 	c.state.goNext(c)
 }
 
 func (c *Context) GoBack() {
-	c.memberAccess.RLock()
-	defer c.memberAccess.RUnlock()
+	c.stateAccess.Lock()
 	c.state.goBack(c)
 }
 
 type First struct{}
 
 func (First) goNext(c *Context) {
-	c.SetState(Transition{})
-	defer c.SetState(Second{})
+	c.state = Transition{}
+	c.stateAccess.Unlock()
+	defer c.setState(Second{})
 	fmt.Println("First -> Second")
 	time.Sleep(1 * time.Millisecond) // simulating a slow transition
 }
 
-func (First) goBack(*Context) {
+func (First) goBack(c *Context) {
+	c.stateAccess.Unlock()
 	fmt.Println("Cannot go back, already at the beginning!")
 }
 
@@ -62,15 +61,17 @@ func (First) name() string {
 type Second struct{}
 
 func (Second) goNext(c *Context) {
-	c.SetState(Transition{})
-	defer c.SetState(Third{})
+	c.state = Transition{}
+	c.stateAccess.Unlock()
+	defer c.setState(Third{})
 	fmt.Println("Second -> Third")
 	time.Sleep(3 * time.Millisecond) // simulating a very slow transition
 }
 
 func (Second) goBack(c *Context) {
-	c.SetState(Transition{})
-	defer c.SetState(First{})
+	c.state = Transition{}
+	c.stateAccess.Unlock()
+	defer c.setState(First{})
 	fmt.Println("Second -> First")
 }
 
@@ -80,13 +81,15 @@ func (Second) name() string {
 
 type Third struct{}
 
-func (Third) goNext(*Context) {
+func (Third) goNext(c *Context) {
+	c.stateAccess.Unlock()
 	fmt.Println("Cannot go forward, already at the end!")
 }
 
 func (Third) goBack(c *Context) {
-	c.SetState(Transition{})
-	defer c.SetState(Second{})
+	c.state = Transition{}
+	c.stateAccess.Unlock()
+	defer c.setState(Second{})
 	fmt.Println("Third -> Second")
 }
 
@@ -96,11 +99,13 @@ func (Third) name() string {
 
 type Transition struct{}
 
-func (Transition) goNext(*Context) {
+func (Transition) goNext(c *Context) {
+	c.stateAccess.Unlock()
 	fmt.Println("Busy, cannot GoNext")
 }
 
-func (Transition) goBack(*Context) {
+func (Transition) goBack(c *Context) {
+	c.stateAccess.Unlock()
 	fmt.Println("Busy, cannot GoBack")
 }
 
@@ -111,7 +116,7 @@ func (Transition) name() string {
 // Testing concurrency, every run will be random:
 func main() {
 	stateMachine := Context{
-		First{}, sync.RWMutex{}, sync.RWMutex{},
+		First{}, sync.RWMutex{},
 	}
 
 	waitGroup := sync.WaitGroup{}
@@ -127,13 +132,13 @@ func main() {
 	}()
 
 	waitGroup.Add(1)
-	// Ask to go next every 2 ms
+	// Ask to go next every 1 ms
 	go func() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
+			time.Sleep(1 * time.Millisecond)
 			fmt.Println("Please GoNext")
 			stateMachine.GoNext()
-			time.Sleep(2 * time.Millisecond)
 		}
 	}()
 
@@ -142,9 +147,9 @@ func main() {
 	go func() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
+			time.Sleep(10 * time.Millisecond)
 			fmt.Println("Please GoBack (10ms)")
 			stateMachine.GoBack()
-			time.Sleep(10 * time.Millisecond)
 		}
 	}()
 
@@ -153,9 +158,9 @@ func main() {
 	go func() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
+			time.Sleep(25 * time.Millisecond)
 			fmt.Println("Please GoBack (25ms)")
 			stateMachine.GoBack()
-			time.Sleep(25 * time.Millisecond)
 		}
 	}()
 
