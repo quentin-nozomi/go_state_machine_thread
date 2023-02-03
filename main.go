@@ -117,13 +117,23 @@ func main() {
 	waitGroup := sync.WaitGroup{}
 
 	waitGroup.Add(1)
-	// Ask to go next every 5 ms
+	// Ask status constantly
+	go func() {
+		defer waitGroup.Done()
+		for i := 0; i < 50; i++ {
+			fmt.Printf("> Status? [%s]\n", stateMachine.Status())
+			time.Sleep(1 * time.Millisecond)
+		}
+	}()
+
+	waitGroup.Add(1)
+	// Ask to go next every 2 ms
 	go func() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
 			fmt.Println("Please GoNext")
 			stateMachine.GoNext()
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(2 * time.Millisecond)
 		}
 	}()
 
