@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
 
 type State interface {
-	goNext(*Context)
-	goBack(*Context)
+	goNext(*Context) string
+	goBack(*Context) string
 	name() string
 }
 
@@ -29,29 +30,29 @@ func (c *Context) Status() string {
 	return c.state.name()
 }
 
-func (c *Context) GoNext() {
+func (c *Context) GoNext() string {
 	c.stateAccess.Lock()
-	c.state.goNext(c)
+	return c.state.goNext(c)
 }
 
-func (c *Context) GoBack() {
+func (c *Context) GoBack() string {
 	c.stateAccess.Lock()
-	c.state.goBack(c)
+	return c.state.goBack(c)
 }
 
 type First struct{}
 
-func (First) goNext(c *Context) {
-	c.state = Transition{}
+func (First) goNext(c *Context) string {
+	c.state = Transition{"First -> Second"}
 	c.stateAccess.Unlock()
 	defer c.setState(Second{})
-	fmt.Println("First -> Second")
 	time.Sleep(1 * time.Millisecond) // simulating a slow transition
+	return "First -> Second\n"
 }
 
-func (First) goBack(c *Context) {
+func (First) goBack(c *Context) string {
 	c.stateAccess.Unlock()
-	fmt.Println("Cannot go back, already at the beginning!")
+	return "Cannot go back, already at the beginning!\n"
 }
 
 func (First) name() string {
@@ -60,19 +61,19 @@ func (First) name() string {
 
 type Second struct{}
 
-func (Second) goNext(c *Context) {
-	c.state = Transition{}
+func (Second) goNext(c *Context) string {
+	c.state = Transition{"Second -> Third"}
 	c.stateAccess.Unlock()
 	defer c.setState(Third{})
-	fmt.Println("Second -> Third")
 	time.Sleep(3 * time.Millisecond) // simulating a very slow transition
+	return "Second -> Third\n"
 }
 
-func (Second) goBack(c *Context) {
-	c.state = Transition{}
+func (Second) goBack(c *Context) string {
+	c.state = Transition{"Second -> First"}
 	c.stateAccess.Unlock()
 	defer c.setState(First{})
-	fmt.Println("Second -> First")
+	return "Second -> First\n"
 }
 
 func (Second) name() string {
@@ -81,36 +82,38 @@ func (Second) name() string {
 
 type Third struct{}
 
-func (Third) goNext(c *Context) {
+func (Third) goNext(c *Context) string {
 	c.stateAccess.Unlock()
-	fmt.Println("Cannot go forward, already at the end!")
+	return "Cannot go forward, already at the end!\n"
 }
 
-func (Third) goBack(c *Context) {
-	c.state = Transition{}
+func (Third) goBack(c *Context) string {
+	c.state = Transition{"Third -> Second"}
 	c.stateAccess.Unlock()
 	defer c.setState(Second{})
-	fmt.Println("Third -> Second")
+	return "Third -> Second\n"
 }
 
 func (Third) name() string {
 	return "Third"
 }
 
-type Transition struct{}
-
-func (Transition) goNext(c *Context) {
-	c.stateAccess.Unlock()
-	fmt.Println("Busy, cannot GoNext")
+type Transition struct {
+	CurrentName string
 }
 
-func (Transition) goBack(c *Context) {
+func (Transition) goNext(c *Context) string {
 	c.stateAccess.Unlock()
-	fmt.Println("Busy, cannot GoBack")
+	return "Busy, cannot GoNext\n"
 }
 
-func (Transition) name() string {
-	return "Transition"
+func (Transition) goBack(c *Context) string {
+	c.stateAccess.Unlock()
+	return "Busy, cannot GoBack\n"
+}
+
+func (t Transition) name() string {
+	return t.CurrentName
 }
 
 // Testing concurrency, every run will be random:
@@ -119,6 +122,8 @@ func main() {
 		First{}, sync.RWMutex{},
 	}
 
+	var sb strings.Builder
+
 	waitGroup := sync.WaitGroup{}
 
 	waitGroup.Add(1)
@@ -126,7 +131,7 @@ func main() {
 	go func() {
 		defer waitGroup.Done()
 		for i := 0; i < 50; i++ {
-			fmt.Printf("> Status? [%s]\n", stateMachine.Status())
+			sb.WriteString(fmt.Sprintf("> Status? [%s]\n", stateMachine.Status()))
 			time.Sleep(1 * time.Millisecond)
 		}
 	}()
@@ -137,8 +142,8 @@ func main() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
 			time.Sleep(1 * time.Millisecond)
-			fmt.Println("Please GoNext")
-			stateMachine.GoNext()
+			sb.WriteString(fmt.Sprintln("Please GoNext"))
+			sb.WriteString(stateMachine.GoNext())
 		}
 	}()
 
@@ -148,8 +153,8 @@ func main() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
 			time.Sleep(10 * time.Millisecond)
-			fmt.Println("Please GoBack (10ms)")
-			stateMachine.GoBack()
+			sb.WriteString(fmt.Sprintln("Please GoBack (10ms)"))
+			sb.WriteString(stateMachine.GoBack())
 		}
 	}()
 
@@ -159,10 +164,12 @@ func main() {
 		defer waitGroup.Done()
 		for i := 0; i < 20; i++ {
 			time.Sleep(25 * time.Millisecond)
-			fmt.Println("Please GoBack (25ms)")
-			stateMachine.GoBack()
+			sb.WriteString(fmt.Sprintln("Please GoBack (25ms)"))
+			sb.WriteString(stateMachine.GoBack())
 		}
 	}()
 
 	waitGroup.Wait()
+
+	fmt.Println(sb.String())
 }
